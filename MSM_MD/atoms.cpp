@@ -4,6 +4,9 @@
 #include <fstream>
 #include "logger.h"
 #include "utils.h"
+#include "sim.h"
+#include "random.h"
+#include <math.h>
 
 using namespace MSM_MD_NS;
 using namespace std;
@@ -21,14 +24,39 @@ void Atoms::add_atom(double px, double py, double pz)
 	y.push_back(py);
 	z.push_back(pz);
 
-	vx.push_back(0.0);
-	vy.push_back(0.0);
-	vz.push_back(0.0);
+	vx.push_back(Random::gaussian(0.0, sqrt(Sim::TEMP)));
+	vy.push_back(Random::gaussian(0.0, sqrt(Sim::TEMP)));
+	vz.push_back(Random::gaussian(0.0, sqrt(Sim::TEMP)));
 
 	type.push_back(0);
 	id.push_back(id.size());
 
 	n_atoms = id.size();
+}
+
+void Atoms::zero_momentum()
+{
+	double mu_x = 0.0;
+	double mu_y = 0.0;
+	double mu_z = 0.0;
+
+	for (int i = 0; i < n_atoms; i++)
+	{
+		mu_x += vx[i];
+		mu_y += vy[i];
+		mu_z += vz[i];
+	}
+
+	mu_x /= n_atoms;
+	mu_y /= n_atoms;
+	mu_z /= n_atoms;
+
+	for (int i = 0; i < n_atoms; i++)
+	{
+		vx[i] -= mu_x;
+		vy[i] -= mu_y;
+		vz[i] -= mu_z;
+	}
 }
 
 Atoms Atoms::create_atoms(const char *filename)
@@ -76,6 +104,8 @@ Atoms Atoms::create_atoms(const char *filename)
 	}
 
 	data_io.close();
+
+	atoms.zero_momentum();
 
 	Logger::log("Succesfully loaded ", true, true, "");
 	Logger::log(to_string(atoms.n_atoms), true, true, "");

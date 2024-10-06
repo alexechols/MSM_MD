@@ -22,8 +22,8 @@ void Input::parse(int argc, char* argv[])
 		if (arg.compare("-in") == 0)
 		{
 			Sim::atoms = Atoms::create_atoms(argv[i + 1]); //Do this later so it gets properly logged (right now the logger stream is not initialized)
-			Sim::force = Potential::lennard_jones_f;
-			Sim::potential = Potential::lennard_jones_e;
+			Sim::force = Potential::lennard_jones_f_cutoff;
+			Sim::potential = Potential::lennard_jones_e_cutoff;
 		}
 
 		else if (arg.compare("-log") == 0)

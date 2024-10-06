@@ -30,6 +30,9 @@ namespace MSM_MD_NS {
 
 		static Atoms create_atoms(const char *filename);
 
+	private:
+		void zero_momentum();
+
 	};
 }
 

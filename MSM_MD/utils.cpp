@@ -139,3 +139,33 @@ std::string utils::strip(std::string str) {
 	
 	return str.substr(low, high - low);
 }
+
+double utils::periodic_dist(double dx, double Lx)
+{
+	double half_L = Lx / 2;
+
+	if (dx > half_L)
+	{
+		dx -= Lx;
+	}
+	else if (dx < -half_L)
+	{
+		dx += Lx;
+	}
+
+	return dx;
+}
+
+double utils::periodic_pos(double x, double Lx)
+{
+	if (x < 0)
+	{
+		x += Lx;
+	}
+	else if (x > Lx)
+	{
+		x -= Lx;
+	}
+
+	return x;
+}

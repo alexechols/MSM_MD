@@ -18,10 +18,16 @@ namespace MSM_MD_NS {
 		double toFloat(char* str); // Convert a string to a float
 		long toInteger(char* str); // Convert a string to an int
 
+		double periodic_dist(double dx, double Lx);
+		double periodic_pos(double x, double Lx);
+
 		std::vector<std::string> split(std::string str);
 		std::vector<std::string> split(std::string str, std::string sep);
 
 		std::string strip(std::string str);
-	}
+
+		const double kB = 1;
+
+		}
 }
 #endif

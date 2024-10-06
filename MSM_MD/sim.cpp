@@ -8,32 +8,36 @@ using namespace MSM_MD_NS;
 using namespace std;
 
 double Sim::DELTA = 0.002;
+double Sim::TEMP = 0.831;
+vector<double> Sim::L = { 6.8, 6.8, 6.8 };
+
 int Sim::timestep = 0;
 int Sim::run_for = 0;
 bool Sim::dumped = false;
 
 Atoms Sim::atoms = Atoms();
-vector<double>(*Sim::force)(Atoms,int) = Potential::lennard_jones_f;
-double (*Sim::potential)(Atoms, int) = Potential::lennard_jones_e;
+vector<double>(*Sim::force)(Atoms,int) = Potential::lennard_jones_f_cutoff;
+double (*Sim::potential)(Atoms, int) = Potential::lennard_jones_e_cutoff;
 
 const char* Sim::dumpfile = "./msm_md.dump";
 
 
 void Sim::verlet(int n_steps)
 {
-	Logger::log("Total E | Kinetic E | Potential E | Px | Py | Pz\n-----------------------------");
+	if (timestep == 0)
+	{
+		Logger::log("Time | Total E | Kinetic E | Potential E | Px | Py | Pz | Press | Temp \n---------------------------------------------");
+	}
+
 	for (int _ = 0; _ < n_steps; _++)
 	{
 		if (timestep % dump_freq == 0)
 		{
 			dump(dumpfile);
+			log_out();
 		}
 
-		Logger::log(to_string(Sim::calc_e()) + " " + to_string(Sim::calc_ke()) + " " + to_string(Sim::calc_pe()), true, true, "");
-
-		vector<double> p = Sim::calc_p();
-
-		Logger::log(" " + to_string(p[0]) + " " + to_string(p[1]) + " " + to_string(p[2]));
+		
 
 		verlet_one();
 
@@ -56,6 +60,7 @@ void Sim::verlet_one()
 		fx[i] = fi[0];
 		fy[i] = fi[1];
 		fz[i] = fi[2];
+		//Logger::log(to_string(fx[i]));
 	}
 
 	// Calculate half-timestep velocities
@@ -74,6 +79,11 @@ void Sim::verlet_one()
 		atoms.x[i] += DELTA * atoms.vx[i];
 		atoms.y[i] += DELTA * atoms.vy[i];
 		atoms.z[i] += DELTA * atoms.vz[i];
+
+		// PBCs
+		atoms.x[i] = utils::periodic_pos(atoms.x[i], L[0]);
+		atoms.y[i] = utils::periodic_pos(atoms.y[i], L[1]);
+		atoms.z[i] = utils::periodic_pos(atoms.z[i], L[2]);
 	}
 
 	// Calculate forces on new positions
@@ -105,6 +115,7 @@ double Sim::calc_ke()
 	vector<double> vy = atoms.vy;
 	vector<double> vz = atoms.vz;
 
+
 	for (int i = 0; i < atoms.n_atoms; i++)
 	{
 		double v_mag_sq = vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i];
@@ -132,6 +143,35 @@ double Sim::calc_pe()
 double Sim::calc_e()
 {
 	return calc_ke() + calc_pe();
+}
+
+double Sim::calc_t()
+{
+	double ke = calc_ke();
+
+	return 2 * ke / atoms.n_atoms / utils::kB / 3;
+}
+
+double Sim::calc_press()
+{
+	double T = calc_t();
+
+	double p = 0;
+	double V = (L[0] * L[1] * L[2]);
+
+	p += atoms.n_atoms * utils::kB * T / V;
+
+	double virial = 0.0;
+
+	for (int i = 0; i < atoms.n_atoms; i++)
+	{
+		vector<double> f = force(atoms, i);
+		virial += f[0] * atoms.x[i] + f[1] * atoms.y[i] + f[2] * atoms.z[i];
+	}
+
+	p += virial / V / 3;
+
+	return p;
 }
 
 vector<double> Sim::calc_p()
@@ -175,8 +215,13 @@ void Sim::dump(const char* filename)
 	dump_io << "ITEM: NUMBER OF ATOMS" << endl;
 	dump_io << atoms.n_atoms << endl;
 
+	dump_io << "ITEM: BOX BOUNDS xx yy zz" << endl;
+	dump_io << "0.0 " << to_string(L[0]) << endl;
+	dump_io << "0.0 " << to_string(L[1]) << endl;
+	dump_io << "0.0 " << to_string(L[2]) << endl;
+
 	// Write atom info
-	dump_io << "ITEM: ATOMS id type x y z" << endl; // this whole method needs to be remade to be more generalized lol
+	dump_io << "ITEM: ATOMS id type x y z vx vy vz" << endl; // this whole method needs to be remade to be more generalized lol
 	for (int i = 0; i < atoms.n_atoms; i++)
 	{
 		int id = atoms.id[i];
@@ -184,9 +229,26 @@ void Sim::dump(const char* filename)
 		double x = atoms.x[i];
 		double y = atoms.y[i];
 		double z = atoms.z[i];
+		double vx = atoms.vx[i];
+		double vy = atoms.vy[i];
+		double vz = atoms.vz[i];
 
-		dump_io << id << " " << type << " " << to_string(x) << " " << to_string(y) << " " << to_string(z) << endl;
+		dump_io << id << " " << type << " " << to_string(x) << " " << to_string(y) << " " << to_string(z) << " " << to_string(vx) << " " << to_string(vy) << " " << to_string(vz) << endl;
 	}
 
 	dump_io.close();
+}
+
+void Sim::log_out()
+{
+	Logger::log(to_string(timestep * DELTA) + " " + to_string(Sim::calc_e()) + " " + to_string(Sim::calc_ke()) + " " + to_string(Sim::calc_pe()), true, true, "");
+
+	vector<double> p = Sim::calc_p();
+
+	Logger::log(" " + to_string(p[0]) + " " + to_string(p[1]) + " " + to_string(p[2]), true, true, "");
+
+	double press = calc_press();
+	double temp = calc_t();
+
+	Logger::log(" " + to_string(press) + " " + to_string(temp));
 }

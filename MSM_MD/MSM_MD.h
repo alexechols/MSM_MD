@@ -10,5 +10,8 @@
 #include "potential.h"
 #include "sim.h"
 #include "input.h"
+#include <chrono>
+#include <ctime>
+#include "random.h"
 
 // TODO: Reference additional headers your program requires here.
