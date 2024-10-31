@@ -4,6 +4,9 @@
 #include "potential.h"
 #include "logger.h"
 #include "utils.h"
+#include <iostream>
+#include <fstream>
+#include "command.h"
 
 using namespace std;
 using namespace MSM_MD_NS;
@@ -21,24 +24,26 @@ void Input::parse(int argc, char* argv[])
 
 		if (arg.compare("-in") == 0)
 		{
-			Sim::atoms = Atoms::create_atoms(argv[i + 1]); //Do this later so it gets properly logged (right now the logger stream is not initialized)
-			Sim::force = Potential::lennard_jones_f_cutoff;
-			Sim::potential = Potential::lennard_jones_e_cutoff;
-		}
+			ifstream input_io(argv[i+1]);
 
-		else if (arg.compare("-log") == 0)
-		{
-			log_path = argv[i + 1];
+			if (!input_io.is_open())
+			{
+				Logger::error("Failed to load input file");
+			}
+
+			string line;
+
+			while (getline(input_io, line))
+			{
+				Command::parse_line(line);
+			}
+
 		}
-		else if (arg.compare("-dump") == 0)
+		/*else
 		{
-			Sim::dumpfile = argv[i + 1];
-		}
-		else if (arg.compare("-n") == 0)
-		{
-			Sim::run_for = utils::toInteger(argv[i + 1]);
-		}
+			Logger::error("Invalid command line option \"" + (string) argv[i] + "\"");
+		}*/
 	}
 
-	Logger::logfile = fopen(log_path.c_str(), "w");
+	//Logger::logfile = fopen(log_path.c_str(), "w");
 }

@@ -77,3 +77,9 @@ void Logger::warning(char c, bool to_screen, bool to_log, const char* newline)
 
 	Logger::warning(chr_str + c, to_screen, to_log, newline);
 }
+
+void Logger::change_file(std::string filepath)
+{
+
+	logfile = fopen(filepath.c_str(), "w");
+}

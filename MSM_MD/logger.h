@@ -22,6 +22,8 @@ namespace MSM_MD_NS {
 		static void error(char c, bool to_screen = true, bool to_log = true, const char* newline = "\n");
 		static void warning(char c, bool to_screen = true, bool to_log = true, const char* newline = "\n");
 		static void log(char c, bool to_screen = true, bool to_log = true, const char* newline = "\n");
+
+		static void change_file(std::string path);
 	};
 }
 

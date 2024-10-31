@@ -11,12 +11,23 @@ namespace MSM_MD_NS
 	static class Potential {
 	public:
 		static double cutoff;
+		static double cutoff_sq;
 
-		static vector<double> lennard_jones_f(Atoms atoms, int i); // Calculates the force on the i-th atom using LJ
-		static double lennard_jones_e(Atoms atoms, int i);
+		static vector<double> lennard_jones_f(int i); // Calculates the force on the i-th atom using LJ
+		static double lennard_jones_e(int i);
 
-		static vector<double> lennard_jones_f_cutoff(Atoms atoms, int i);
-		static double lennard_jones_e_cutoff(Atoms atoms, int i);
+		static vector<double> lennard_jones_f(int i, int j); // Calculates the force on the i-th atom from the j-th atom using LJ
+		static double lennard_jones_e(int i, int j);
+
+		static double lennard_jones_f_scalar(double r);
+
+		static vector<double> lennard_jones_f_cutoff(int i);
+		static double lennard_jones_e_cutoff(int i);
+
+		static vector<double> lennard_jones_f_cutoff(int i, int j);
+		static double lennard_jones_e_cutoff(int i, int j);
+		
+		static double lennard_jones_f_cutoff_scalar(double r);
 
 	private:
 		static double cutoff_e; // Actual potential value at cutoff

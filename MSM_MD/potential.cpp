@@ -2,78 +2,119 @@
 #include <cmath>
 #include "sim.h"
 #include "utils.h"
+#include "logger.h"
 
 using namespace std;
 using namespace MSM_MD_NS;
 
 double Potential::cutoff = 3.4;
+double Potential::cutoff_sq = 3.4;
 bool Potential::cached = false;
 double Potential::cutoff_e = 0.0;
 double Potential::cutoff_e_deriv = 0.0;
 
-vector<double> Potential::lennard_jones_f(Atoms atoms, int i)
+vector<double> Potential::lennard_jones_f(int i, int j)
 {
 	vector<double> force = { 0.0, 0.0, 0.0 };
 
-	vector<double> x = atoms.x;
-	vector<double> y = atoms.y;
-	vector<double> z = atoms.z;
+	vector<double> x = Sim::atoms.x;
+	vector<double> y = Sim::atoms.y;
+	vector<double> z = Sim::atoms.z;
 
-	for (int j = 0; j < atoms.n_atoms; j++)
+	if (i == j)
 	{
-		if (i == j)
-		{
-			continue; // Obviously don't compute forces with self
-		}
+		return force;
+	}
 
-		double dx = utils::periodic_dist(x[i] - x[j], Sim::L[0]);
-		double dy = utils::periodic_dist(y[i] - y[j], Sim::L[1]);
-		double dz = utils::periodic_dist(z[i] - z[j], Sim::L[2]);
+	double dx = Sim::periodic[0] ? utils::periodic_dist(x[j] - x[i], Sim::L[0]) : x[j] - x[i];
+	double dy = Sim::periodic[1] ? utils::periodic_dist(y[j] - y[i], Sim::L[1]) : y[j] - y[i];
+	double dz = Sim::periodic[2] ? utils::periodic_dist(z[j] - z[i], Sim::L[2]) : z[j] - z[i];
 
-		double inv_mag_sq = 1 / (dx * dx + dy * dy + dz * dz);
-		double inv_mag = sqrt(inv_mag_sq);
-		double inv_mag_six = inv_mag_sq * inv_mag_sq * inv_mag_sq;
+	double inv_mag_sq = 1 / (dx * dx + dy * dy + dz * dz);
+	//double inv_mag = sqrt(inv_mag_sq);
+	double inv_mag_six = inv_mag_sq * inv_mag_sq * inv_mag_sq;
 
-		double f_mag = 24 * (2 * inv_mag_six * inv_mag_six * inv_mag - inv_mag_six * inv_mag);
+	//double f_mag = - 24 * (2 * inv_mag_six * inv_mag_six * inv_mag - inv_mag_six * inv_mag);
+	double f_mag = -24 * (2 * inv_mag_six - 1) * inv_mag_six * inv_mag_sq;
 
-		force[0] += f_mag * dx * inv_mag;
-		force[1] += f_mag * dy * inv_mag;
-		force[2] += f_mag * dz * inv_mag;
+	//force[0] = f_mag * dx * inv_mag;
+	//force[1] = f_mag * dy * inv_mag;
+	//force[2] = f_mag * dz * inv_mag;
+
+	force[0] = f_mag * dx;
+	force[1] = f_mag * dy;
+	force[2] = f_mag * dz;
+
+	//Logger::log(to_string(1 / inv_mag) + " " + to_string(f_mag));
+
+	return force;
+}
+
+vector<double> Potential::lennard_jones_f(int i)
+{
+	vector<double> force = { 0.0, 0.0, 0.0 };
+
+	for (int j = 0; j < Sim::atoms.n_atoms; j++)
+	{
+		vector<double> ij_force = lennard_jones_f(i, j);
+		
+		force[0] += ij_force[0];
+		force[1] += ij_force[1];
+		force[2] += ij_force[2];
 	}
 
 	return force;
 }
 
-double Potential::lennard_jones_e(Atoms atoms, int i)
+double Potential::lennard_jones_f_scalar(double r)
+{
+	double inv_r = 1 / r;
+	double inv_r_sq = inv_r * inv_r;
+	double inv_r_six = inv_r_sq * inv_r_sq * inv_r_sq;
+
+	return -24 * (2 * inv_r_six - 1) * inv_r_six * inv_r_sq;
+}
+
+double Potential::lennard_jones_e(int i, int j)
+{
+	double e = 0.0;
+
+	if (i == j)
+	{
+		return e;
+	}
+	
+	vector<double> x = Sim::atoms.x;
+	vector<double> y = Sim::atoms.y;
+	vector<double> z = Sim::atoms.z;
+
+	double dx = Sim::periodic[0] ? utils::periodic_dist(x[j] - x[i], Sim::L[0]) : x[j] - x[i];
+	double dy = Sim::periodic[1] ? utils::periodic_dist(y[j] - y[i], Sim::L[1]) : y[j] - y[i];
+	double dz = Sim::periodic[2] ? utils::periodic_dist(z[j] - z[i], Sim::L[2]) : z[j] - z[i];
+
+	double inv_mag_sq = 1 / (dx * dx + dy * dy + dz * dz);
+	double inv_mag_six = inv_mag_sq * inv_mag_sq * inv_mag_sq;
+
+	e = 4 * (inv_mag_six - 1) * inv_mag_six;
+	
+	return e;
+}
+
+double Potential::lennard_jones_e(int i)
 {
 	double e = 0;
 
-	vector<double> x = atoms.x;
-	vector<double> y = atoms.y;
-	vector<double> z = atoms.z;
-
-	for (int j = 0; j < atoms.n_atoms; j++)
+	for (int j = 0; j < Sim::atoms.n_atoms; j++)
 	{
-		if (i == j)
-		{
-			continue; // Obviously don't compute potential with self
-		}
+		double ij_e = lennard_jones_e(i, j);
 
-		double dx = utils::periodic_dist(x[i] - x[j], Sim::L[0]);
-		double dy = utils::periodic_dist(y[i] - y[j], Sim::L[1]);
-		double dz = utils::periodic_dist(z[i] - z[j], Sim::L[2]);
-
-		double inv_mag_sq = 1 / (dx * dx + dy * dy + dz * dz);
-		double inv_mag_six = inv_mag_sq * inv_mag_sq * inv_mag_sq;
-
-		e += 4 * (inv_mag_six * inv_mag_six - inv_mag_six);
-
+		e += ij_e;
 	}
 
 	return e;
 }
 
-vector<double> Potential::lennard_jones_f_cutoff(Atoms atoms, int i)
+vector<double> Potential::lennard_jones_f_cutoff(int i, int j)
 {
 	if (!cached)
 	{
@@ -82,49 +123,80 @@ vector<double> Potential::lennard_jones_f_cutoff(Atoms atoms, int i)
 
 	vector<double> force = { 0.0, 0.0, 0.0 };
 
-	vector<double> x = atoms.x;
-	vector<double> y = atoms.y;
-	vector<double> z = atoms.z;
+	vector<double> x = Sim::atoms.x;
+	vector<double> y = Sim::atoms.y;
+	vector<double> z = Sim::atoms.z;
 
-	for (int j = 0; j < atoms.n_atoms; j++)
+	if (i == j)
 	{
-		if (i == j)
-		{
-			continue; // Obviously don't compute forces with self
-		}
+		return force;
+	}
 
-		double dx = utils::periodic_dist(x[i] - x[j], Sim::L[0]);
-		double dy = utils::periodic_dist(y[i] - y[j], Sim::L[1]);
-		double dz = utils::periodic_dist(z[i] - z[j], Sim::L[2]);
+	double dx = Sim::periodic[0] ? utils::periodic_dist(x[j] - x[i], Sim::L[0]) : x[j] - x[i];
+	double dy = Sim::periodic[1] ? utils::periodic_dist(y[j] - y[i], Sim::L[1]) : y[j] - y[i];
+	double dz = Sim::periodic[2] ? utils::periodic_dist(z[j] - z[i], Sim::L[2]) : z[j] - z[i];
 
-		//Logger::log(to_string(dx) + " " + to_string(dy) + " " + to_string(dz));
-
-		double r_sq = dx * dx + dy * dy + dz * dz;
-		double r = sqrt(r_sq);
+	double r_sq = dx * dx + dy * dy + dz * dz;
 
 
-		if (r <= cutoff)
-		{
-			double inv_mag_sq = 1 / r_sq;
-			double inv_mag = 1 / r;
-			double inv_mag_six = inv_mag_sq * inv_mag_sq * inv_mag_sq;
+	if (r_sq > cutoff_sq)
+	{
+		return force;
+	}
 
-			double f_mag = 24 * (2 * inv_mag_six * inv_mag_six * inv_mag - inv_mag_six * inv_mag) + cutoff_e_deriv;
+	double inv_mag_sq = 1 / r_sq;
+	double inv_mag = sqrt(inv_mag_sq);
+	double inv_mag_six = inv_mag_sq * inv_mag_sq * inv_mag_sq;
 
-			//Logger::log(to_string(f_mag) + " " + to_string(r));
+	double f_mag = -24 * (2 * inv_mag_six * inv_mag_six * inv_mag - inv_mag_six * inv_mag) + cutoff_e_deriv;
 
-			force[0] += f_mag * dx * inv_mag;
-			force[1] += f_mag * dy * inv_mag;
-			force[2] += f_mag * dz * inv_mag;
-		}
+	force[0] = f_mag * dx * inv_mag;
+	force[1] = f_mag * dy * inv_mag;
+	force[2] = f_mag * dz * inv_mag;
 
+	return force;
+}
+
+vector<double> Potential::lennard_jones_f_cutoff(int i)
+{
+
+	vector<double> force = { 0.0, 0.0, 0.0 };
+
+	for (int j = 0; j < Sim::atoms.n_atoms; j++)
+	{
+		vector<double> ij_force = lennard_jones_f_cutoff(i, j);
+
+		force[0] += ij_force[0];
+		force[1] += ij_force[1];
+		force[2] += ij_force[2];
 	}
 
 	return force;
 
 }
 
-double Potential::lennard_jones_e_cutoff(Atoms atoms, int i) 
+double Potential::lennard_jones_f_cutoff_scalar(double r)
+{
+	if (!cached)
+	{
+		cache_cutoff();
+	}
+
+	if (r > cutoff)
+	{
+		return 0.0;
+	}
+
+	double inv_r = 1 / r;
+	double inv_r_sq = inv_r * inv_r;
+	double inv_r_six = inv_r_sq * inv_r_sq * inv_r_sq;
+
+	double f = 24 * (2 * inv_r_six - 1) * inv_r_six * inv_r;
+
+	return f - cutoff_e_deriv;
+}
+
+double Potential::lennard_jones_e_cutoff(int i, int j)
 {
 	if (!cached)
 	{
@@ -133,34 +205,43 @@ double Potential::lennard_jones_e_cutoff(Atoms atoms, int i)
 
 	double e = 0;
 
-	vector<double> x = atoms.x;
-	vector<double> y = atoms.y;
-	vector<double> z = atoms.z;
+	vector<double> x = Sim::atoms.x;
+	vector<double> y = Sim::atoms.y;
+	vector<double> z = Sim::atoms.z;
 
-	for (int j = 0; j < atoms.n_atoms; j++)
+	if (i == j)
 	{
-		if (i == j)
-		{
-			continue; // Obviously don't compute potential with self
-		}
+		return e;
+	}
 
-		double dx = utils::periodic_dist(x[i] - x[j], Sim::L[0]);
-		double dy = utils::periodic_dist(y[i] - y[j], Sim::L[1]);
-		double dz = utils::periodic_dist(z[i] - z[j], Sim::L[2]);
+	double dx = Sim::periodic[0] ? utils::periodic_dist(x[j] - x[i], Sim::L[0]) : x[j] - x[i];
+	double dy = Sim::periodic[1] ? utils::periodic_dist(y[j] - y[i], Sim::L[1]) : y[j] - y[i];
+	double dz = Sim::periodic[2] ? utils::periodic_dist(z[j] - z[i], Sim::L[2]) : z[j] - z[i];
 
-		double r_sq = dx * dx + dy * dy + dz * dz;
-		double r = sqrt(r_sq);
-		
-		if (r <= cutoff)
-		{
-			double inv_mag_sq = 1 / r_sq;
-			double inv_mag_six = inv_mag_sq * inv_mag_sq * inv_mag_sq;
+	double r_sq = dx * dx + dy * dy + dz * dz;
+	double r = sqrt(r_sq);
 
-			e += 4 * (inv_mag_six * inv_mag_six - inv_mag_six);
-			e -= cutoff_e;
-			e -= cutoff_e_deriv * (r - cutoff);
-		}
-		
+	if (r > cutoff)
+	{
+		return e;
+	}
+
+	double inv_mag_sq = 1 / r_sq;
+	double inv_mag_six = inv_mag_sq * inv_mag_sq * inv_mag_sq;
+
+	e += 4 * (inv_mag_six * inv_mag_six - inv_mag_six);
+	e -= cutoff_e;
+	e += cutoff_e_deriv * (r - cutoff);
+
+	return e;
+}
+double Potential::lennard_jones_e_cutoff(int i) 
+{
+	double e = 0;
+
+	for (int j = 0; j < Sim::atoms.n_atoms; j++)
+	{
+		e += lennard_jones_e_cutoff(i, j);
 	}
 
 	return e;
