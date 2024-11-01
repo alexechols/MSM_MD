@@ -24,6 +24,18 @@ void Atoms::add_atom(double px, double py, double pz)
 	y.push_back(py);
 	z.push_back(pz);
 
+	x0.push_back(px);
+	y0.push_back(py);
+	z0.push_back(pz);
+
+	fx.push_back(0.0);
+	fy.push_back(0.0);
+	fz.push_back(0.0);
+
+	x_flag.push_back(0);
+	y_flag.push_back(0);
+	z_flag.push_back(0);
+
 	vx.push_back(Random::gaussian(0.0, sqrt(Sim::TEMP)));
 	vy.push_back(Random::gaussian(0.0, sqrt(Sim::TEMP)));
 	vz.push_back(Random::gaussian(0.0, sqrt(Sim::TEMP)));
@@ -56,6 +68,20 @@ void Atoms::zero_momentum()
 		vx[i] -= mu_x;
 		vy[i] -= mu_y;
 		vz[i] -= mu_z;
+	}
+}
+
+void Atoms::reset_zero_positions()
+{
+	for (int i = 0; i < n_atoms; i++)
+	{
+		x0[i] = x[i];
+		y0[i] = y[i];
+		z0[i] = z[i];
+
+		x_flag[i] = 0;
+		y_flag[i] = 0;
+		z_flag[i] = 0;
 	}
 }
 

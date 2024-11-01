@@ -13,6 +13,10 @@ namespace MSM_MD_NS
 		static double cutoff;
 		static double cutoff_sq;
 
+		static void lj_update_forces_potentials();
+		static void lj_cut_update_force_potentials();
+
+
 		static vector<double> lennard_jones_f(int i); // Calculates the force on the i-th atom using LJ
 		static double lennard_jones_e(int i);
 

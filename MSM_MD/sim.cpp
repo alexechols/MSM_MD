@@ -17,8 +17,9 @@ int Sim::run_for = 0;
 bool Sim::dumped = false;
 bool Sim::thermoed = false;
 
-double Sim::t_damp = 0.05;
-double Sim::t_set = 0.83;
+double Sim::inv_t_damp_sq = 400;
+double Sim::inv_t_set = 1.204;
+double Sim::zeta = 0.0;
 
 Atoms Sim::atoms = Atoms();
 vector<double>(*Sim::force)(int) = Potential::lennard_jones_f_cutoff;
@@ -105,13 +106,40 @@ void Sim::verlet_one()
 
 		// PBCs
 		if (periodic[0]) {
-			atoms.x[i] = utils::periodic_pos(atoms.x[i], L[0]);
+			if (atoms.x[i] < 0)
+			{
+				atoms.x[i] += L[0];
+				atoms.x_flag[i] -= 1;
+			}
+			else if (atoms.x[i] > L[0])
+			{
+				atoms.x[i] -= L[0];
+				atoms.x_flag[i] += 1;
+			}
 		}
 		if (periodic[1]) {
-			atoms.y[i] = utils::periodic_pos(atoms.y[i], L[1]);
+			if (atoms.y[i] < 0)
+			{
+				atoms.y[i] += L[1];
+				atoms.y_flag[i] -= 1;
+			}
+			else if (atoms.y[i] > L[1])
+			{
+				atoms.y[i] -= L[1];
+				atoms.y_flag[i] += 1;
+			}
 		}
 		if (periodic[2]) {
-			atoms.z[i] = utils::periodic_pos(atoms.z[i], L[2]);
+			if (atoms.z[i] < 0)
+			{
+				atoms.z[i] += L[2];
+				atoms.z_flag[i] -= 1;
+			}
+			else if (atoms.z[i] > L[2])
+			{
+				atoms.z[i] -= L[2];
+				atoms.z_flag[i] += 1;
+			}
 		}
 	}
 
@@ -138,7 +166,103 @@ void Sim::verlet_one()
 
 void Sim::nose_hoover_one()
 {
-	
+	int n = atoms.n_atoms;
+
+	vector<double> fx(n);
+	vector<double> fy(n);
+	vector<double> fz(n);
+
+	// Calculate forces on initial positions
+	for (int i = 0; i < n; i++)
+	{
+		vector<double> fi = force(i);
+		fx[i] = fi[0];
+		fy[i] = fi[1];
+		fz[i] = fi[2];
+		//Logger::log(to_string(fx[i]));
+	}
+
+	// Calculate half-timestep velocities
+	for (int i = 0; i < n; i++)
+	{
+		int t = atoms.type[i];
+
+		atoms.vx[i] += (DELTA / 2) * (fx[i] / atoms.mass[t] - zeta * atoms.vx[i]);
+		atoms.vy[i] += (DELTA / 2) * (fy[i] / atoms.mass[t] - zeta * atoms.vy[i]);
+		atoms.vz[i] += (DELTA / 2) * (fz[i] / atoms.mass[t] - zeta * atoms.vz[i]);
+	}
+
+	// Calculate new positions
+	for (int i = 0; i < n; i++)
+	{
+		atoms.x[i] += DELTA * atoms.vx[i];
+		atoms.y[i] += DELTA * atoms.vy[i];
+		atoms.z[i] += DELTA * atoms.vz[i];
+
+
+		// PBCs
+		if (periodic[0]) {
+			if (atoms.x[i] < 0)
+			{
+				atoms.x[i] += L[0];
+				atoms.x_flag[i] -= 1;
+			}
+			else if (atoms.x[i] > L[0])
+			{
+				atoms.x[i] -= L[0];
+				atoms.x_flag[i] += 1;
+			}
+		}
+		if (periodic[1]) {
+			if (atoms.y[i] < 0)
+			{
+				atoms.y[i] += L[1];
+				atoms.y_flag[i] -= 1;
+			}
+			else if (atoms.y[i] > L[1])
+			{
+				atoms.y[i] -= L[1];
+				atoms.y_flag[i] += 1;
+			}
+		}
+		if (periodic[2]) {
+			if (atoms.z[i] < 0)
+			{
+				atoms.z[i] += L[2];
+				atoms.z_flag[i] -= 1;
+			}
+			else if (atoms.z[i] > L[2])
+			{
+				atoms.z[i] -= L[2];
+				atoms.z_flag[i] += 1;
+			}
+		}
+	}
+
+	// Calculate new zeta
+	double temp = calc_t();
+	zeta += DELTA * inv_t_damp_sq * (temp * inv_t_set - 1);
+
+
+	// Calculate forces on new positions
+	for (int i = 0; i < n; i++)
+	{
+		vector<double> fi = force(i);
+		fx[i] = fi[0];
+		fy[i] = fi[1];
+		fz[i] = fi[2];
+	}
+
+	// Calculate new velocites
+	double prefac = 1 / (1 + DELTA * 0.5 * zeta);
+	for (int i = 0; i < n; i++)
+	{
+		int t = atoms.type[i];
+
+		atoms.vx[i] = (atoms.vx[i] + (DELTA / 2) * fx[i] / atoms.mass[t]) * prefac;
+		atoms.vy[i] = (atoms.vy[i] + (DELTA / 2) * fy[i] / atoms.mass[t]) * prefac;
+		atoms.vz[i] = (atoms.vz[i] + (DELTA / 2) * fz[i] / atoms.mass[t]) * prefac;
+	}
 }
 
 double Sim::calc_ke()
@@ -253,6 +377,22 @@ vector<double> Sim::calc_momentum()
 	return p;
 }
 
+double Sim::calc_msd()
+{
+	double msd = 0.0;
+
+	for (int i = 0; i < atoms.n_atoms; i++)
+	{
+		double dx = atoms.x_flag[i] * L[0] + atoms.x[i] - atoms.x0[i];
+		double dy = atoms.y_flag[i] * L[1] + atoms.y[i] - atoms.y0[i];
+		double dz = atoms.z_flag[i] * L[2] + atoms.z[i] - atoms.z0[i];
+
+		msd += (dx * dx + dy * dy + dz * dz);
+	}
+
+	return msd / atoms.n_atoms;
+}
+
 void Sim::dump()
 {
 	ofstream dump_io(dumpfile, ofstream::out | ofstream::app);
@@ -323,7 +463,7 @@ void Sim::thermo()
 		ofstream thermo_io(thermofile, ofstream::out | ofstream::trunc);
 		thermoed = true;
 
-		thermo_io << "timestep time temperature pressure v_pressure e_pressure kinetic potential total mom_x mom_y mom_z" << endl;
+		thermo_io << "timestep time temperature pressure v_pressure e_pressure kinetic potential total mom_x mom_y mom_z msd" << endl;
 	}
 
 	if (!thermo_io.is_open())
@@ -333,7 +473,7 @@ void Sim::thermo()
 
 	vector<double> p = calc_momentum();
 
-	thermo_io << timestep << " " << timestep * DELTA << " " << calc_t() << " " << calc_press() << " " << calc_press_vir() << " " << calc_press_ide() << " " << calc_ke() << " " << calc_pe() << " " << calc_e() << " " << p[0] << " " << p[1] << " " << p[2] << endl;
+	thermo_io << timestep << " " << timestep * DELTA << " " << calc_t() << " " << calc_press() << " " << calc_press_vir() << " " << calc_press_ide() << " " << calc_ke() << " " << calc_pe() << " " << calc_e() << " " << p[0] << " " << p[1] << " " << p[2] << " " << calc_msd() << endl;
 	
 	thermo_io.close();
 }

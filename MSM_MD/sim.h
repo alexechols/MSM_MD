@@ -15,12 +15,16 @@ namespace MSM_MD_NS
 		static vector<double> L;
 		static vector<bool> periodic;
 
+		static double virial; // Virial component of the pressure
+		static double pe; // Potential Energy
+
 		static int timestep;
 		static int run_for;
 
 		// Parameters for nvt, not used otherwise
-		static double t_damp;
-		static double t_set;
+		static double inv_t_damp_sq;
+		static double inv_t_set;
+		static double zeta;
 
 		static string dumpfile;
 		static string thermofile;
@@ -50,6 +54,7 @@ namespace MSM_MD_NS
 		static double calc_press(); // Instantaneous pressure
 		static double calc_press_ide(); //Non-virial component of pressure
 		static double calc_press_vir(); //Virial component of pressure
+		static double calc_msd(); // Mean squared displacement
 		static vector<double> calc_momentum(); // Calculates the net momentum in x, y, z
 
 		static void dump();

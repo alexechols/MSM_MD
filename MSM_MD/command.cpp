@@ -35,6 +35,7 @@ void Command::parse_line(string line)
 	else if (command == "velocity") { Command::velocity(line); }
 	else if (command == "run") { Command::run(line); }
 	else if (command == "seed") { Command::seed(line); }
+	else if (command == "integrate") { Command::integrate(line); }
 	else {
 		Logger::error("Malformed or unrecognized command \"" + split_line[0] + "\" in line \"" + line + "\"");
 	}
@@ -285,9 +286,9 @@ void Command::velocity(string line)
 
 			for (int i = 0; i < Sim::atoms.n_atoms; i++)
 			{
-				Sim::atoms.vx[i] = Random::gaussian(0.0, sqrt(temp * Const::kB / Const::eps));
-				Sim::atoms.vy[i] = Random::gaussian(0.0, sqrt(temp * Const::kB / Const::eps));
-				Sim::atoms.vz[i] = Random::gaussian(0.0, sqrt(temp * Const::kB / Const::eps));
+				Sim::atoms.vx[i] = Random::gaussian(0.0, sqrt(temp));
+				Sim::atoms.vy[i] = Random::gaussian(0.0, sqrt(temp));
+				Sim::atoms.vz[i] = Random::gaussian(0.0, sqrt(temp));
 			}
 			Sim::atoms.zero_momentum();
 			Logger::log("Velocities initialized at T = " + split_line[2]);
@@ -340,7 +341,7 @@ void Command::integrate(string line)
 {
 	vector<string> split_line = utils::split(line);
 
-	if (split_line.size() != 2 || split_line.size() != 4)
+	if ((split_line.size() != 2) && (split_line.size() != 4))
 	{
 		Logger::error("Incorrect parameters in command \"" + line + "\"");
 	}
@@ -374,8 +375,13 @@ void Command::integrate(string line)
 			Logger::error("Damping constant must be a float, value \"" + split_line[3] + "\" is invalid");
 		}
 
-		Sim::t_damp = utils::toFloat(split_line[3]);
-		Sim::t_set = utils::toFloat(split_line[2]);
+		Sim::inv_t_damp_sq = 1/(utils::toFloat(split_line[3]) * utils::toFloat(split_line[3]));
+		Sim::inv_t_set = 1/utils::toFloat(split_line[2]);
 		Sim::integrator = Sim::nose_hoover_one;
 	}
+	else {
+		Logger::error("Unrecognized integration mode");
+	}
+
+	Sim::atoms.reset_zero_positions();
 }

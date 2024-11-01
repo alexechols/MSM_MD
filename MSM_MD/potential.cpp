@@ -13,6 +13,134 @@ bool Potential::cached = false;
 double Potential::cutoff_e = 0.0;
 double Potential::cutoff_e_deriv = 0.0;
 
+void Potential::lj_update_forces_potentials()
+{
+	Atoms atoms = Sim::atoms;
+
+	int n = atoms.n_atoms;
+	vector<double> x = atoms.x;
+	vector<double> y = atoms.y;
+	vector<double> z = atoms.z;
+
+	vector<double> fx = atoms.fx;
+	vector<double> fy = atoms.fy;
+	vector<double> fz = atoms.fz;
+
+	for (int i = 0; i < n; i++)
+	{
+		fx[i] = 0;
+		fy[i] = 0;
+		fz[i] = 0;
+	}
+
+
+	double virial = 0.0;
+	double pe = 0.0;
+
+	for (int i = 0; i < n; i++)
+	{
+		for (int j = i + 1; j < n; j++)
+		{
+			double dx = Sim::periodic[0] ? utils::periodic_dist(x[j] - x[i], Sim::L[0]) : x[j] - x[i];
+			double dy = Sim::periodic[1] ? utils::periodic_dist(y[j] - y[i], Sim::L[1]) : y[j] - y[i];
+			double dz = Sim::periodic[2] ? utils::periodic_dist(z[j] - z[i], Sim::L[2]) : z[j] - z[i];
+
+			double r_two = dx * dx + dy * dy + dz * dz;
+			double r = sqrt(r_two);
+			double inv_r_two = 1 / r_two;
+			double inv_r_six = inv_r_two * inv_r_two * inv_r_two;
+
+			double inv_r = 1 / r;
+
+			double force_factor = -24 * (2 * inv_r_six - 1) * inv_r_six * inv_r;
+			double pot_factor = 4 * (inv_r_six - 1) * inv_r_six;
+
+			pe += 2 * pot_factor; // Times two because we are adding potential for ij and ji
+			virial += force_factor * r;
+
+			fx[i] += force_factor * dx * inv_r;
+			fy[i] += force_factor * dy * inv_r;
+			fz[i] += force_factor * dz * inv_r;
+
+			fx[j] -= force_factor * dx * inv_r;
+			fy[j] -= force_factor * dy * inv_r;
+			fz[j] -= force_factor * dz * inv_r;
+		}
+	}
+
+	Sim::virial = virial;
+	Sim::pe = pe;
+}
+
+void Potential::lj_cut_update_force_potentials()
+{
+	if (!cached)
+	{
+		cache_cutoff();
+	}
+
+	Atoms atoms = Sim::atoms;
+
+	int n = atoms.n_atoms;
+	vector<double> x = atoms.x;
+	vector<double> y = atoms.y;
+	vector<double> z = atoms.z;
+
+	vector<double> fx = atoms.fx;
+	vector<double> fy = atoms.fy;
+	vector<double> fz = atoms.fz;
+
+	for (int i = 0; i < n; i++)
+	{
+		fx[i] = 0;
+		fy[i] = 0;
+		fz[i] = 0;
+	}
+
+	double virial = 0.0;
+	double pe = 0.0;
+
+	for (int i = 0; i < n; i++)
+	{
+		for (int j = i + 1; j < n; j++)
+		{
+			double dx = Sim::periodic[0] ? utils::periodic_dist(x[j] - x[i], Sim::L[0]) : x[j] - x[i];
+			double dy = Sim::periodic[1] ? utils::periodic_dist(y[j] - y[i], Sim::L[1]) : y[j] - y[i];
+			double dz = Sim::periodic[2] ? utils::periodic_dist(z[j] - z[i], Sim::L[2]) : z[j] - z[i];
+
+			double r_two = dx * dx + dy * dy + dz * dz;
+
+			if (r_two > cutoff_sq)
+			{
+				continue;
+			}
+
+			double r = sqrt(r_two);
+			double inv_r_two = 1 / r_two;
+			double inv_r_six = inv_r_two * inv_r_two * inv_r_two;
+
+			double inv_r = 1 / r;
+
+			double force_factor = -24 * (2 * inv_r_six - 1) * inv_r_six * inv_r - cutoff_e_deriv;
+			double pot_factor = 4 * (inv_r_six - 1) * inv_r_six - cutoff_e + (r - cutoff) * cutoff_e_deriv;
+
+			pe += 2 * pot_factor; // Times two because we are adding potential for ij and ji
+			virial += force_factor * r;
+
+			fx[i] += force_factor * dx * inv_r;
+			fy[i] += force_factor * dy * inv_r;
+			fz[i] += force_factor * dz * inv_r;
+
+			fx[j] -= force_factor * dx * inv_r;
+			fy[j] -= force_factor * dy * inv_r;
+			fz[j] -= force_factor * dz * inv_r;
+		}
+	}
+
+	Sim::virial = virial;
+	Sim::pe = pe;
+}
+
 vector<double> Potential::lennard_jones_f(int i, int j)
 {
 	vector<double> force = { 0.0, 0.0, 0.0 };

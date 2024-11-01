@@ -9,11 +9,11 @@ using namespace MSM_MD_NS;
 int main(int argc, char* argv[])
 {
 	Random::seed(1234567);
-	Input::parse(argc, argv);
+	
 
 	auto start = chrono::system_clock::now();
 
-	Sim::verlet(Sim::run_for);
+	Input::parse(argc, argv);
 
 	auto end = chrono::system_clock::now();
 
