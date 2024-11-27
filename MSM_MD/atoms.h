@@ -2,6 +2,7 @@
 #define ATOMS
 
 #include <vector>
+#include <string>
 
 using namespace std;
 
@@ -10,7 +11,6 @@ namespace MSM_MD_NS {
 	class Atoms {
 	public:
 		vector<int> id;
-		vector<int> type;
 
 		vector<double> x;
 		vector<double> y;
@@ -28,19 +28,25 @@ namespace MSM_MD_NS {
 		vector<double> vy;
 		vector<double> vz;
 
+		vector<double> px;
+		vector<double> py;
+		vector<double> pz;
+
 		vector<double> fx;
 		vector<double> fy;
 		vector<double> fz;
 
 		vector<double> mass;
+		vector<double> radius;
 
 		int n_atoms;
 
 		Atoms();
 
-		void add_atom(double px, double py, double pz);
+		void add_atom(double x_pos, double y_pos, double z_pos, double vel_x, double vel_y, double vel_z, double m, double r);
 
 		static Atoms create_atoms(const char *filename);
+		void read_add_atom(vector<string> header, vector<string> line);
 
 		void zero_momentum();
 

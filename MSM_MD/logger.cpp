@@ -25,6 +25,8 @@ void Logger::error(std::string str, bool to_screen, bool to_log, const char* new
 
 	Logger::log(err_msg, to_screen, to_log, newline);
 
+	fclose(Logger::logfile);
+
 	throw std::runtime_error(str);
 }
 

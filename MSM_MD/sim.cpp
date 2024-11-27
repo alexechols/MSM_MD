@@ -3,17 +3,23 @@
 #include <iostream>
 #include "utils.h"
 #include "potential.h"
+#include "computes.h"
+#include "constants.h"
+
 
 using namespace MSM_MD_NS;
 using namespace std;
 
 double Sim::DELTA = 0.002;
-double Sim::TEMP = 0.831;
 vector<double> Sim::L = { 6.8, 6.8, 6.8 };
-vector<bool> Sim::periodic = { true, true, true };
+vector<bool> Sim::periodic = { false, false, false };
+
+double Sim::virial = 0.0;
+double Sim::pe = 0.0;
+double Sim::ke = 0.0;
+double Sim::mom = 0.0;
 
 int Sim::timestep = 0;
-int Sim::run_for = 0;
 bool Sim::dumped = false;
 bool Sim::thermoed = false;
 
@@ -22,14 +28,8 @@ double Sim::inv_t_set = 1.204;
 double Sim::zeta = 0.0;
 
 Atoms Sim::atoms = Atoms();
-vector<double>(*Sim::force)(int) = Potential::lennard_jones_f_cutoff;
-double (*Sim::potential)(int) = Potential::lennard_jones_e_cutoff;
 
-vector<double>(*Sim::ij_force)(int, int) = Potential::lennard_jones_f_cutoff;
-double (*Sim::ij_potential)(int, int) = Potential::lennard_jones_e_cutoff;
-
-double (*Sim::scalar_force)(double) = Potential::lennard_jones_f_cutoff_scalar;
-
+void (*Sim::update_forces)() = Potential::lj_update_forces_potentials;
 void (*Sim::integrator)() = Sim::verlet_one;
 
 int Sim::dump_freq = 1;
@@ -39,16 +39,30 @@ int Sim::log_freq = 1;
 string Sim::dumpfile = "";
 string Sim::thermofile = "";
 
+Timer Sim::force_timer = Timer();
+Timer Sim::integrator_timer = Timer();
+Timer Sim::io_timer = Timer();
+Timer Sim::global = Timer();
+
 
 void Sim::run_sim(int n_steps)
 {
 	if (timestep == 0)
 	{
 		Logger::log("Time | Total E | Kinetic E | Potential E | Press | Virial Pressure | Energy Pressure | Temp \n---------------------------------------------");
+		update_forces_wrapper();
+		dump();
+		log_out();
+		thermo();
 	}
 
 	for (int _ = 0; _ < n_steps; _++)
 	{
+
+		integrator_wrapper();
+
+		timestep++;
+
 		if (timestep % dump_freq == 0)
 		{
 			dump();
@@ -61,39 +75,37 @@ void Sim::run_sim(int n_steps)
 		{
 			thermo();
 		}
-
-		integrator();
-
-		timestep++;
 	}
+}
+
+void Sim::update_forces_wrapper()
+{
+	force_timer.start();
+	update_forces();
+	force_timer.stop();
+}
+
+void Sim::integrator_wrapper()
+{
+	integrator_timer.start();
+	integrator();
+	integrator_timer.stop();
 }
 
 void Sim::verlet_one()
 {
 	int n = atoms.n_atoms;
-
-	vector<double> fx(n);
-	vector<double> fy(n);
-	vector<double> fz(n);
-
-	// Calculate forces on initial positions
-	for (int i = 0; i < n; i++)
-	{
-		vector<double> fi = force(i);
-		fx[i] = fi[0];
-		fy[i] = fi[1];
-		fz[i] = fi[2];
-		//Logger::log(to_string(fx[i]));
-	}
+	
+	//update_forces();
 
 	// Calculate half-timestep velocities
 	for (int i = 0; i < n; i++)
 	{
-		int t = atoms.type[i];
 
-		atoms.vx[i] += (DELTA / 2) * fx[i] / atoms.mass[t];
-		atoms.vy[i] += (DELTA / 2) * fy[i] / atoms.mass[t];
-		atoms.vz[i] += (DELTA / 2) * fz[i] / atoms.mass[t];
+		atoms.vx[i] += (DELTA / 2) * atoms.fx[i] / atoms.mass[i];
+		atoms.vy[i] += (DELTA / 2) * atoms.fy[i] / atoms.mass[i];
+		atoms.vz[i] += (DELTA / 2) * atoms.fz[i] / atoms.mass[i];
+		
 	}
 
 	// Calculate new positions
@@ -143,53 +155,41 @@ void Sim::verlet_one()
 		}
 	}
 
-	// Calculate forces on new positions
-	for (int i = 0; i < n; i++)
-	{
-		vector<double> fi = force(i);
-		fx[i] = fi[0];
-		fy[i] = fi[1];
-		fz[i] = fi[2];
-	}
+	update_forces_wrapper();
+
+	ke = 0.0;
+	mom = 0.0;
 
 	// Calculate new velocites
 	for (int i = 0; i < n; i++)
-	{
-		int t = atoms.type[i];
+	{	
+		atoms.vx[i] += (DELTA / 2) * atoms.fx[i] / atoms.mass[i];
+		atoms.vy[i] += (DELTA / 2) * atoms.fy[i] / atoms.mass[i];
+		atoms.vz[i] += (DELTA / 2) * atoms.fz[i] / atoms.mass[i];
 
-		atoms.vx[i] += (DELTA / 2) * fx[i] / atoms.mass[t];
-		atoms.vy[i] += (DELTA / 2) * fy[i] / atoms.mass[t];
-		atoms.vz[i] += (DELTA / 2) * fz[i] / atoms.mass[t];
+		atoms.px[i] = atoms.vx[i] * atoms.mass[i];
+		atoms.py[i] = atoms.vy[i] * atoms.mass[i];
+		atoms.pz[i] = atoms.vz[i] * atoms.mass[i];
+
+		double ke_add = atoms.mass[i] * (atoms.vx[i] * atoms.vx[i] + atoms.vy[i] * atoms.vy[i] + atoms.vz[i] * atoms.vz[i]);
+		ke += ke_add;
 	}
 
+	ke *= 0.5;
 }
 
 void Sim::nose_hoover_one()
 {
 	int n = atoms.n_atoms;
 
-	vector<double> fx(n);
-	vector<double> fy(n);
-	vector<double> fz(n);
-
-	// Calculate forces on initial positions
-	for (int i = 0; i < n; i++)
-	{
-		vector<double> fi = force(i);
-		fx[i] = fi[0];
-		fy[i] = fi[1];
-		fz[i] = fi[2];
-		//Logger::log(to_string(fx[i]));
-	}
+	//update_forces();
 
 	// Calculate half-timestep velocities
 	for (int i = 0; i < n; i++)
 	{
-		int t = atoms.type[i];
-
-		atoms.vx[i] += (DELTA / 2) * (fx[i] / atoms.mass[t] - zeta * atoms.vx[i]);
-		atoms.vy[i] += (DELTA / 2) * (fy[i] / atoms.mass[t] - zeta * atoms.vy[i]);
-		atoms.vz[i] += (DELTA / 2) * (fz[i] / atoms.mass[t] - zeta * atoms.vz[i]);
+		atoms.vx[i] += (DELTA / 2) * (atoms.fx[i] / atoms.mass[i] - zeta * atoms.vx[i]);
+		atoms.vy[i] += (DELTA / 2) * (atoms.fy[i] / atoms.mass[i] - zeta * atoms.vy[i]);
+		atoms.vz[i] += (DELTA / 2) * (atoms.fz[i] / atoms.mass[i] - zeta * atoms.vz[i]);
 	}
 
 	// Calculate new positions
@@ -240,161 +240,276 @@ void Sim::nose_hoover_one()
 	}
 
 	// Calculate new zeta
-	double temp = calc_t();
+	double temp = Computes::calc_t();
 	zeta += DELTA * inv_t_damp_sq * (temp * inv_t_set - 1);
 
+	update_forces_wrapper();
 
-	// Calculate forces on new positions
-	for (int i = 0; i < n; i++)
-	{
-		vector<double> fi = force(i);
-		fx[i] = fi[0];
-		fy[i] = fi[1];
-		fz[i] = fi[2];
-	}
+	ke = 0.0;
+	mom = 0.0;
 
 	// Calculate new velocites
 	double prefac = 1 / (1 + DELTA * 0.5 * zeta);
 	for (int i = 0; i < n; i++)
 	{
-		int t = atoms.type[i];
 
-		atoms.vx[i] = (atoms.vx[i] + (DELTA / 2) * fx[i] / atoms.mass[t]) * prefac;
-		atoms.vy[i] = (atoms.vy[i] + (DELTA / 2) * fy[i] / atoms.mass[t]) * prefac;
-		atoms.vz[i] = (atoms.vz[i] + (DELTA / 2) * fz[i] / atoms.mass[t]) * prefac;
-	}
-}
+		atoms.vx[i] = (atoms.vx[i] + (DELTA / 2) * atoms.fx[i] / atoms.mass[i]) * prefac;
+		atoms.vy[i] = (atoms.vy[i] + (DELTA / 2) * atoms.fy[i] / atoms.mass[i]) * prefac;
+		atoms.vz[i] = (atoms.vz[i] + (DELTA / 2) * atoms.fz[i] / atoms.mass[i]) * prefac;
 
-double Sim::calc_ke()
-{
-	double ke = 0.0;
+		atoms.px[i] = atoms.vx[i] * atoms.mass[i];
+		atoms.py[i] = atoms.vy[i] * atoms.mass[i];
+		atoms.pz[i] = atoms.vz[i] * atoms.mass[i];
 
-	vector<double> vx = atoms.vx;
-	vector<double> vy = atoms.vy;
-	vector<double> vz = atoms.vz;
-
-
-	for (int i = 0; i < atoms.n_atoms; i++)
-	{
-		double v_mag_sq = vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i];
-
-		int t = atoms.type[i];
-
-		ke += atoms.mass[t] * v_mag_sq;
+		double ke_add = atoms.mass[i] * (atoms.vx[i] * atoms.vx[i] + atoms.vy[i] * atoms.vy[i] + atoms.vz[i] * atoms.vz[i]);
+		ke += ke_add;
+		mom += sqrt(ke_add * atoms.mass[i]);
 	}
 
-	return ke / 2; // Divide by two at the end for compute speed
+	ke *= 0.5;
 }
 
-double Sim::calc_pe()
+void Sim::yoshida_one()
 {
-	double pe = 0.0;
+	int n = atoms.n_atoms;
 
-	for (int i = 0; i < atoms.n_atoms; i++)
+	// Calculate x1 positions
+	for (int i = 0; i < n; i++)
 	{
-		pe += potential(i);
-		//Logger::log(to_string(potential(i)));
-	}
+		atoms.x[i] += DELTA * atoms.vx[i] * Const::c1;
+		atoms.y[i] += DELTA * atoms.vy[i] * Const::c1;
+		atoms.z[i] += DELTA * atoms.vz[i] * Const::c1;
 
-	return pe / 2; // Divide by two because of double counting ji and ij bonds
-}
 
-double Sim::calc_e()
-{
-	return calc_ke() + calc_pe();
-}
-
-double Sim::calc_t()
-{
-	double ke = calc_ke();
-
-	return 2 * ke / utils::kB / 3 / atoms.n_atoms;
-}
-
-double Sim::calc_press()
-{
-	return calc_press_ide() + calc_press_vir();
-}
-
-double Sim::calc_press_ide()
-{
-	double T = calc_t();
-
-	double V = (L[0] * L[1] * L[2]);
-
-	return atoms.n_atoms * utils::kB * T / V;
-}
-
-double Sim::calc_press_vir()
-{
-	double V = (L[0] * L[1] * L[2]);
-
-	vector<double> x = atoms.x;
-	vector<double> y = atoms.y;
-	vector<double> z = atoms.z;
-
-	double virial = 0.0;
-
-	for (int i = 0; i < atoms.n_atoms; i++)
-	{
-		for (int j = i + 1; j < atoms.n_atoms; j++)
-		{
-			if (i == j)
+		// PBCs
+		if (periodic[0]) {
+			if (atoms.x[i] < 0)
 			{
-				continue;
+				atoms.x[i] += L[0];
+				atoms.x_flag[i] -= 1;
 			}
-
-			double dx = periodic[0] ? utils::periodic_dist(x[j] - x[i], L[0]) : x[j] - x[i];
-			double dy = periodic[1] ? utils::periodic_dist(y[j] - y[i], L[1]) : y[j] - y[i];
-			double dz = periodic[2] ? utils::periodic_dist(z[j] - z[i], L[2]) : z[j] - z[i];
-
-			double r = sqrt(dx * dx + dy * dy + dz * dz);
-			double f = scalar_force(r);
-			virial += r * f;
+			else if (atoms.x[i] > L[0])
+			{
+				atoms.x[i] -= L[0];
+				atoms.x_flag[i] += 1;
+			}
 		}
-
-		//vector<double> f = force(i);
-		//virial += f[0] * atoms.x[i] + f[1] * atoms.y[i] + f[2] * atoms.z[i];
+		if (periodic[1]) {
+			if (atoms.y[i] < 0)
+			{
+				atoms.y[i] += L[1];
+				atoms.y_flag[i] -= 1;
+			}
+			else if (atoms.y[i] > L[1])
+			{
+				atoms.y[i] -= L[1];
+				atoms.y_flag[i] += 1;
+			}
+		}
+		if (periodic[2]) {
+			if (atoms.z[i] < 0)
+			{
+				atoms.z[i] += L[2];
+				atoms.z_flag[i] -= 1;
+			}
+			else if (atoms.z[i] > L[2])
+			{
+				atoms.z[i] -= L[2];
+				atoms.z_flag[i] += 1;
+			}
+		}
 	}
 
-	return virial / V / 3;
-}
+	// Calculate v1 velocities
+	update_forces_wrapper();
 
-vector<double> Sim::calc_momentum()
-{
-	vector<double> p = { 0.0, 0.0, 0.0 };
-
-	for (int i = 0; i < atoms.n_atoms; i++)
+	for (int i = 0; i < n; i++)
 	{
-		int t = atoms.type[i];
-		double m = atoms.mass[t];
-
-		p[0] += m * atoms.vx[i];
-		p[1] += m * atoms.vy[i];
-		p[2] += m * atoms.vz[i];
+		atoms.vx[i] += Const::d1 * DELTA * atoms.fx[i] / atoms.mass[i];
+		atoms.vy[i] += Const::d1 * DELTA * atoms.fy[i] / atoms.mass[i];
+		atoms.vz[i] += Const::d1 * DELTA * atoms.fz[i] / atoms.mass[i];
 	}
 
-	return p;
-}
-
-double Sim::calc_msd()
-{
-	double msd = 0.0;
-
-	for (int i = 0; i < atoms.n_atoms; i++)
+	// Calculate x2 positions
+	for (int i = 0; i < n; i++)
 	{
-		double dx = atoms.x_flag[i] * L[0] + atoms.x[i] - atoms.x0[i];
-		double dy = atoms.y_flag[i] * L[1] + atoms.y[i] - atoms.y0[i];
-		double dz = atoms.z_flag[i] * L[2] + atoms.z[i] - atoms.z0[i];
+		atoms.x[i] += DELTA * atoms.vx[i] * Const::c2;
+		atoms.y[i] += DELTA * atoms.vy[i] * Const::c2;
+		atoms.z[i] += DELTA * atoms.vz[i] * Const::c2;
 
-		msd += (dx * dx + dy * dy + dz * dz);
+
+		// PBCs
+		if (periodic[0]) {
+			if (atoms.x[i] < 0)
+			{
+				atoms.x[i] += L[0];
+				atoms.x_flag[i] -= 1;
+			}
+			else if (atoms.x[i] > L[0])
+			{
+				atoms.x[i] -= L[0];
+				atoms.x_flag[i] += 1;
+			}
+		}
+		if (periodic[1]) {
+			if (atoms.y[i] < 0)
+			{
+				atoms.y[i] += L[1];
+				atoms.y_flag[i] -= 1;
+			}
+			else if (atoms.y[i] > L[1])
+			{
+				atoms.y[i] -= L[1];
+				atoms.y_flag[i] += 1;
+			}
+		}
+		if (periodic[2]) {
+			if (atoms.z[i] < 0)
+			{
+				atoms.z[i] += L[2];
+				atoms.z_flag[i] -= 1;
+			}
+			else if (atoms.z[i] > L[2])
+			{
+				atoms.z[i] -= L[2];
+				atoms.z_flag[i] += 1;
+			}
+		}
 	}
 
-	return msd / atoms.n_atoms;
+
+	// Calculate v2 velocities
+	update_forces_wrapper();
+
+	for (int i = 0; i < n; i++)
+	{
+		atoms.vx[i] += Const::d2 * DELTA * atoms.fx[i] / atoms.mass[i];
+		atoms.vy[i] += Const::d2 * DELTA * atoms.fy[i] / atoms.mass[i];
+		atoms.vz[i] += Const::d2 * DELTA * atoms.fz[i] / atoms.mass[i];
+	}
+
+	// Calculate x3 positions
+	for (int i = 0; i < n; i++)
+	{
+		atoms.x[i] += DELTA * atoms.vx[i] * Const::c2;
+		atoms.y[i] += DELTA * atoms.vy[i] * Const::c2;
+		atoms.z[i] += DELTA * atoms.vz[i] * Const::c2;
+
+
+		// PBCs
+		if (periodic[0]) {
+			if (atoms.x[i] < 0)
+			{
+				atoms.x[i] += L[0];
+				atoms.x_flag[i] -= 1;
+			}
+			else if (atoms.x[i] > L[0])
+			{
+				atoms.x[i] -= L[0];
+				atoms.x_flag[i] += 1;
+			}
+		}
+		if (periodic[1]) {
+			if (atoms.y[i] < 0)
+			{
+				atoms.y[i] += L[1];
+				atoms.y_flag[i] -= 1;
+			}
+			else if (atoms.y[i] > L[1])
+			{
+				atoms.y[i] -= L[1];
+				atoms.y_flag[i] += 1;
+			}
+		}
+		if (periodic[2]) {
+			if (atoms.z[i] < 0)
+			{
+				atoms.z[i] += L[2];
+				atoms.z_flag[i] -= 1;
+			}
+			else if (atoms.z[i] > L[2])
+			{
+				atoms.z[i] -= L[2];
+				atoms.z_flag[i] += 1;
+			}
+		}
+	}
+
+
+	// Calculate v3 velocities (Final)
+	update_forces_wrapper();
+	ke = 0.0;
+	mom = 0.0;
+
+	for (int i = 0; i < n; i++)
+	{
+		atoms.vx[i] += Const::d1 * DELTA * atoms.fx[i] / atoms.mass[i];
+		atoms.vy[i] += Const::d1 * DELTA * atoms.fy[i] / atoms.mass[i];
+		atoms.vz[i] += Const::d1 * DELTA * atoms.fz[i] / atoms.mass[i];
+
+		atoms.px[i] = atoms.vx[i] * atoms.mass[i];
+		atoms.py[i] = atoms.vy[i] * atoms.mass[i];
+		atoms.pz[i] = atoms.vz[i] * atoms.mass[i];
+
+		double ke_add = atoms.mass[i] * (atoms.vx[i] * atoms.vx[i] + atoms.vy[i] * atoms.vy[i] + atoms.vz[i] * atoms.vz[i]);
+		ke += ke_add;
+	}
+
+	ke *= 0.5;
+
+
+	// Calculate x4 positions (Final)
+	for (int i = 0; i < n; i++)
+	{
+		atoms.x[i] += DELTA * atoms.vx[i] * Const::c1;
+		atoms.y[i] += DELTA * atoms.vy[i] * Const::c1;
+		atoms.z[i] += DELTA * atoms.vz[i] * Const::c1;
+
+
+		// PBCs
+		if (periodic[0]) {
+			if (atoms.x[i] < 0)
+			{
+				atoms.x[i] += L[0];
+				atoms.x_flag[i] -= 1;
+			}
+			else if (atoms.x[i] > L[0])
+			{
+				atoms.x[i] -= L[0];
+				atoms.x_flag[i] += 1;
+			}
+		}
+		if (periodic[1]) {
+			if (atoms.y[i] < 0)
+			{
+				atoms.y[i] += L[1];
+				atoms.y_flag[i] -= 1;
+			}
+			else if (atoms.y[i] > L[1])
+			{
+				atoms.y[i] -= L[1];
+				atoms.y_flag[i] += 1;
+			}
+		}
+		if (periodic[2]) {
+			if (atoms.z[i] < 0)
+			{
+				atoms.z[i] += L[2];
+				atoms.z_flag[i] -= 1;
+			}
+			else if (atoms.z[i] > L[2])
+			{
+				atoms.z[i] -= L[2];
+				atoms.z_flag[i] += 1;
+			}
+		}
+	}
+
 }
 
 void Sim::dump()
 {
+	io_timer.start();
 	ofstream dump_io(dumpfile, ofstream::out | ofstream::app);
 	if (dumped) {
 		ofstream dump_io(dumpfile, ofstream::out | ofstream::app);
@@ -423,38 +538,43 @@ void Sim::dump()
 	dump_io << "0.0 " << to_string(L[2]) << endl;
 
 	// Write atom info
-	dump_io << "ITEM: ATOMS id type x y z vx vy vz" << endl; // this whole method needs to be remade to be more generalized lol
+	dump_io << "ITEM: ATOMS id x y z vx vy vz mass radius" << endl; // this whole method needs to be remade to be more generalized lol
 	for (int i = 0; i < atoms.n_atoms; i++)
 	{
 		int id = atoms.id[i];
-		int type = atoms.type[i];
 		double x = atoms.x[i];
 		double y = atoms.y[i];
 		double z = atoms.z[i];
 		double vx = atoms.vx[i];
 		double vy = atoms.vy[i];
 		double vz = atoms.vz[i];
+		double m = atoms.mass[i];
+		double r = atoms.radius[i];
 
-		dump_io << id << " " << type << " " << to_string(x) << " " << to_string(y) << " " << to_string(z) << " " << to_string(vx) << " " << to_string(vy) << " " << to_string(vz) << endl;
+		dump_io << id << " " << to_string(x) << " " << to_string(y) << " " << to_string(z) << " " << to_string(vx) << " " << to_string(vy) << " " << to_string(vz) << " " << to_string(m) << " " << to_string(r) <<  endl;
 	}
 
 	dump_io.close();
+	io_timer.stop();
 }
 
 void Sim::log_out()
 {
-	Logger::log(to_string(timestep * DELTA) + " " + to_string(Sim::calc_e()) + " " + to_string(Sim::calc_ke()) + " " + to_string(Sim::calc_pe()), true, true, "");
+	io_timer.start();
+	Logger::log(to_string(timestep * DELTA) + " " + to_string(Computes::calc_e()) + " " + to_string(Computes::calc_ke()) + " " + to_string(Computes::calc_pe()), true, true, "");
 
-	double press = calc_press();
-	double vir_press = calc_press_vir();
-	double ke_press = calc_press_ide();
-	double temp = calc_t();
+	double press = Computes::calc_press();
+	double vir_press = Computes::calc_press_vir();
+	double ke_press = Computes::calc_press_ide();
+	double temp = Computes::calc_t();
 
 	Logger::log(" " + to_string(press) + " " + to_string(vir_press) + " " + to_string(ke_press) + " " + to_string(temp));
+	io_timer.stop();
 }
 
 void Sim::thermo()
 {
+	io_timer.start();
 	ofstream thermo_io(thermofile, ofstream::out | ofstream::app);
 	if (thermoed) {
 		ofstream thermo_io(thermofile, ofstream::out | ofstream::app);
@@ -471,11 +591,12 @@ void Sim::thermo()
 		return;
 	}
 
-	vector<double> p = calc_momentum();
+	vector<double> p = Computes::calc_momentum();
 
-	thermo_io << timestep << " " << timestep * DELTA << " " << calc_t() << " " << calc_press() << " " << calc_press_vir() << " " << calc_press_ide() << " " << calc_ke() << " " << calc_pe() << " " << calc_e() << " " << p[0] << " " << p[1] << " " << p[2] << " " << calc_msd() << endl;
+	thermo_io << timestep << " " << timestep * DELTA << " " << Computes::calc_t() << " " << Computes::calc_press() << " " << Computes::calc_press_vir() << " " << Computes::calc_press_ide() << " " << Computes::calc_ke() << " " << Computes::calc_pe() << " " << Computes::calc_e() << " " << p[0] << " " << p[1] << " " << p[2] << " " << Computes::calc_msd() << endl;
 	
 	thermo_io.close();
+	io_timer.stop();
 }
 
 void Sim::change_dump(string filename, int freq)
@@ -490,4 +611,26 @@ void Sim::change_thermo(string filename, int freq)
 	thermoed = false;
 	thermofile = filename;
 	thermo_freq = freq;
+}
+
+void Sim::report_times()
+{
+	double tot = global.elapsed;
+	double force = force_timer.elapsed;
+	double io = io_timer.elapsed;
+	double integrate = integrator_timer.elapsed - force;
+	double other = tot - force - io - integrate;
+
+	double p_force = force / tot * 100;
+	double p_io = io / tot * 100;
+	double p_integrate = integrate / tot * 100;
+	double p_other = 100 - p_force - p_io - p_integrate;
+
+	Logger::log("Elapsed Time: " + to_string(tot) + "s");
+	double dt = tot / Sim::timestep;
+	Logger::log("Avg Time per Timestep: " + to_string(dt) + "s");
+	Logger::log("\nBreakdown:\n\tForce Calculations: " + to_string(force) + "s (" + to_string(p_force) + "%)");
+	Logger::log("\tIntegrator (Excluding Forces): " + to_string(integrate) + "s (" + to_string(p_integrate) + "%)");
+	Logger::log("\tI/O (Dump/Log/Thermo): " + to_string(io) + "s (" + to_string(p_io) + "%)");
+	Logger::log("\tOther: " + to_string(other) + "s (" + to_string(p_other) + "%)");
 }

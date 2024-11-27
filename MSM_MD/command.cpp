@@ -135,27 +135,45 @@ void Command::potential(string line)
 	{
 		if (split_line.size() == 2)
 		{
-			Sim::force = Potential::lennard_jones_f;
-			Sim::potential = Potential::lennard_jones_e;
-			Sim::ij_force = Potential::lennard_jones_f;
-			Sim::ij_potential = Potential::lennard_jones_e;
-			Sim::scalar_force = Potential::lennard_jones_f_scalar;
+			Sim::update_forces = Potential::lj_update_forces_potentials;
 
 			Logger::log("Potential: Lennard Jones");
 		}
 		else
 		{
-			Sim::force = Potential::lennard_jones_f_cutoff;
-			Sim::potential = Potential::lennard_jones_e_cutoff;
-			Sim::ij_force = Potential::lennard_jones_f_cutoff;
-			Sim::ij_potential = Potential::lennard_jones_e_cutoff;
-			Sim::scalar_force = Potential::lennard_jones_f_cutoff_scalar;
+			Sim::update_forces = Potential::lj_cut_update_forces_potentials;
 
 			double cut = utils::toFloat(split_line[2]);
 			Potential::cutoff = cut;
 			Potential::cutoff_sq = cut * cut;
 
 			Logger::log("Potential: Lennard Jones (Cutoff: " + split_line[2] + ")");
+		}
+	}
+	else if (split_line[1] == "gravity")
+	{
+		if (split_line.size() == 2)
+		{
+			Sim::update_forces = Potential::gravity_update_forces_potentials;
+
+			Logger::log("Potential: Newtonian Gravity");
+		}
+		else
+		{
+			Logger::error("Cutoff not supported for potential type \"gravity\"");
+		}
+	}
+	else if (split_line[1] == "dummy")
+	{
+		if (split_line.size() == 2)
+		{
+			Sim::update_forces = Potential::dummy_update_forces_potentials;
+
+			Logger::log("Potential: Dummy (No Interactions)");
+		}
+		else
+		{
+			Logger::error("Cutoff not supported for potential type \"dummy\"");
 		}
 	}
 
@@ -315,8 +333,7 @@ void Command::run(string line)
 
 	Logger::log("Running for " + split_line[1] + " timesteps");
 
-	Sim::run_for = utils::toInteger(split_line[1]);
-	Sim::run_sim(Sim::run_for);
+	Sim::run_sim(utils::toInteger(split_line[1]));
 }
 
 void Command::seed(string line)
@@ -379,9 +396,30 @@ void Command::integrate(string line)
 		Sim::inv_t_set = 1/utils::toFloat(split_line[2]);
 		Sim::integrator = Sim::nose_hoover_one;
 	}
+	else if (mode == "vv")
+	{
+		if (split_line.size() != 2)
+		{
+			Logger::error("Mode vv does not take additional parameters");
+		}
+
+		Sim::integrator = Sim::verlet_one;
+		Logger::log("Integrator is Velocity Verlet");
+	}
+	else if (mode == "yoshida")
+	{
+		if (split_line.size() != 2)
+		{
+			Logger::error("Mode vv does not take additional parameters");
+		}
+
+		Sim::integrator = Sim::yoshida_one;
+		Logger::log("Integrator is Yoshida");
+	}
 	else {
 		Logger::error("Unrecognized integration mode");
 	}
 
 	Sim::atoms.reset_zero_positions();
+	Sim::update_forces();
 }
